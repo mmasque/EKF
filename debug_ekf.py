@@ -17,6 +17,7 @@ def ekf_estimation2(xEst, PEst, z, u):
 
     #  Predict
     xPred = E.motion_model(xEst, u)  # here we predict the state based on previous state.
+    xPred[2] = xPred[2] % (2 * math.pi)
     jF = E.jacobF(xPred, u)  # here we get the jacobian of the model function, F. 
 
     PPred = np.matmul(np.matmul(jF, PEst),jF.T) + E.Q    #Here we calculate the covariance of the prediction xPred. Great. 
@@ -28,6 +29,10 @@ def ekf_estimation2(xEst, PEst, z, u):
 
     jH = E.jacobH(xPred, z_available) # Here we get the jacobian of the state -> measurement function, which in this case isn't really a jacobian but a constant. 
     zPred = E.observation_model(xPred, z_available)   # Here we predict the measurements based on our xPred. 
+    
+    zPred[2,0] = zPred[2,0] % (2 * math.pi) 
+    z[0,2] = z[0,2] % (2 * math.pi)
+
     y = (z[0,z_available] - zPred.T).astype(float) # Seems to be the difference between the original measurement and the predicted measurement. 
 
     S = np.matmul(np.matmul(jH, PPred), jH.T) + E.R[z_available[:, None], (z_available)]  #   The covariance of the prediction xPred, i.e. the model's guess of the state, is transformed into the covariance of the measurement prediction, plus the covariance of error in measurement. 
@@ -60,7 +65,7 @@ z = np.array([[2.938364956549898, -5.829428574276752, 5.43208417760029, 5.729651
 u = np.array([[17.2,1.74532925]])
 
 
-E = ekf(10, Constants.R, Constants.Q)
+E = ekf(10)
 print(ekf_estimation2(prevx1, prevpx1, z,u))
 print(ekf_estimation2(realprevx, prevpx1, z,u))
 

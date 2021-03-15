@@ -1,4 +1,26 @@
-# EKF with AR tag data.  
+import math
+import numpy as np
+import matplotlib.pyplot as plt
+import tf
+import random
+
+# EKF with AR tag data. 
+class Constants: 
+    arx0 = 0
+    ary0 = 0
+    arx1 = 10
+    ary1 = 0
+    arx2 = 10
+    ary2 = 10
+    P_AR_OBSERVED = 0.7
+    ERROR_AR = 0.1
+    R = np.diag([1.3, 1.3, 0.5, ERROR_AR, ERROR_AR, ERROR_AR]) ** 2
+    Q = np.diag([
+            0.3,  # variance of location on x-axis | this is really the SD, and same for below, no?
+            0.3,  # variance of location on y-axis
+            np.deg2rad(25.0),  # variance of yaw angle
+            0.5  # variance of velocity
+        ]) ** 2  # predict state covariance
 arx0 = 0
 ary0 = 0
 arx1 = 10
@@ -7,6 +29,7 @@ arx2 = 10
 ary2 = 10
 P_AR_OBSERVED = 0.7
 ERROR_AR = 0.1
+
 class ekf:
     def __init__(self, hz):
 
