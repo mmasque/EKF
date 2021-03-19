@@ -3,24 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import tf
 import random
-
-# EKF with AR tag data. 
-class Constants: 
-    arx0 = 0
-    ary0 = 0
-    arx1 = 10
-    ary1 = 0
-    arx2 = 10
-    ary2 = 10
-    P_AR_OBSERVED = 0.7
-    ERROR_AR = 0.1
-    R = np.diag([1.3, 1.3, 0.5, ERROR_AR, ERROR_AR, ERROR_AR]) ** 2
-    Q = np.diag([
-            0.3,  # variance of location on x-axis | this is really the SD, and same for below, no?
-            0.3,  # variance of location on y-axis
-            np.deg2rad(25.0),  # variance of yaw angle
-            0.5  # variance of velocity
-        ]) ** 2  # predict state covariance
+# EKF with AR tag data.  
 arx0 = 0
 ary0 = 0
 arx1 = 10
@@ -29,14 +12,13 @@ arx2 = 10
 ary2 = 10
 P_AR_OBSERVED = 0.7
 ERROR_AR = 0.1
-
 class ekf:
     def __init__(self, hz):
 
         self.Q = np.diag([
             0.3,  # variance of location on x-axis | this is really the SD, and same for below, no?
             0.3,  # variance of location on y-axis
-            np.deg2rad(25.0),  # variance of yaw angle
+            0,#np.deg2rad(25.0),  # variance of yaw angle
             0.5  # variance of velocity
         ]) ** 2  # predict state covariance
 
@@ -61,30 +43,31 @@ class ekf:
               
         # dimensions are 4 x 2. 
         # so u.T is 2 x 1. Makes sense, ends up w 4x1.
-        B = np.array([[self.dt * math.sin(x[2, 0]), 0], # time interval by cosine of yaw. Essentially the horizontal distance component of the velocity vector, when the velocity is 1 at the current orientation.  
-                      [self.dt * math.cos(x[2, 0]), 0], # vertical distance component, but why in this matrix form?
+        B = np.array([[self.dt * math.cos(x[2, 0]), 0], # time interval by cosine of yaw. Essentially the horizontal distance component of the velocity vector, when the velocity is 1 at the current orientation.  
+                      [self.dt * math.sin(x[2, 0]), 0], # vertical distance component, but why in this matrix form?
                       [0.0, self.dt],   # time interval
                       [1.0, 0.0]])  # to set velocity to the new velocity? 
         x1 = np.matmul(F, x)    # keep position and yaw, but remove velocity. 
         x2 = np.matmul(B, u.T)  # Get the change in x and y, and the change in yaw, as well as the new velocity.
         # updates the x, y and yaw according to the motion model
         retval = x1+x2
-        retval[2] = retval[2] % (2 * math.pi)
         return x1+x2
 
-    
-    def observation_model2(self, x, z_a):
-        # what comes in from the observation? a 4d vector somehow, of which we need the first three elements.
-        H = np.array([
-            [1, 0, 0, 0],
-            [0, 1, 0, 0],
-            [0, 0, 1, 0]
+    def simple_motion_model(self, x, u):
+        """ Predict then next state of the system given the past state and a model
+        :param x: [x, y, yaw, v],
+        :param u: [[v]
+                [yawrate]]
+        :return:
+        """
+        retval = np.array([
+            [x[0,0] + math.sin(x[2,0])* u[0,0] * self.dt],
+            [x[1,0] + math.cos(x[2,0])* u[0,0] * self.dt],
+            [x[2,0] + u[0,1]*self.dt],
+            [u[0,0]]
         ])
-
-        z = np.matmul(H, x)
-
-        return z
-
+        return retval
+    
     def observation_model(self, x, z_available):
         # what comes in from the observation? a 4d vector somehow, of which we need the first three elements.
         z = np.array([[x[0,0], x[1,0], x[2,0], 
@@ -98,25 +81,26 @@ class ekf:
         """
         Jacobian of Motion Model
         motion model
-        x_{t+1} = x_t+v*dt*cos(yaw)
-        y_{t+1} = y_t+v*dt*sin(yaw)
+        x_{t+1} = x_t+v*dt*sin(yaw)
+        y_{t+1} = y_t+v*dt*cos(yaw)
         yaw_{t+1} = yaw_t+omega*dt
         v_{t+1} = v{t}
         so
-        dx/dyaw = -v*dt*sin(yaw)
-        dx/dv = dt*cos(yaw)
-        dy/dyaw = v*dt*cos(yaw)
-        dy/dv = dt*sin(yaw) 
+        dx/dyaw = v*dt*cos(yaw)
+        dx/dv = dt*sin(yaw)
+        dy/dyaw = -v*dt*sin(yaw)
+        dy/dv = dt*cos(yaw) 
         """
         yaw = x[2, 0]
         v = u[0, 0]
         jF = np.array([
-            [1.0, 0.0, self.dt * v * math.cos(yaw), -self.dt * math.sin(yaw)],
-            [0.0, 1.0, self.dt * v * math.sin(yaw), self.dt * math.cos(yaw)],
+            [1.0, 0.0, self.dt * v * math.cos(yaw), self.dt * math.sin(yaw)],
+            [0.0, 1.0, -self.dt * v * math.sin(yaw), self.dt * math.cos(yaw)],
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0]])
 
         return jF
+
 
     def jacobH(self, x, z_available):
         # Jacobian of Observation Model
@@ -153,7 +137,10 @@ class ekf:
         """
 
         #  Predict
-        xPred = self.motion_model(xEst, u)  # here we predict the state based on previous state.
+        xPred = self.simple_motion_model(xEst, u)  # here we predict the state based on previous state.
+        #make sure the predicted theta is bounded
+        xPred[2] = xPred[2] % (math.pi * 2)
+
         jF = self.jacobF(xPred, u)  # here we get the jacobian of the model function, F. 
 
         PPred = np.matmul(np.matmul(jF, PEst),jF.T) + self.Q    #Here we calculate the covariance of the prediction xPred. Great. 
@@ -165,16 +152,22 @@ class ekf:
 
         jH = self.jacobH(xPred, z_available) # Here we get the jacobian of the state -> measurement function, which in this case isn't really a jacobian but a constant. 
         zPred = self.observation_model(xPred, z_available)   # Here we predict the measurements based on our xPred. 
-        y = (z[0,z_available] - zPred.T).astype(np.float) # Seems to be the difference between the original measurement and the predicted measurement. 
+        
+        # make sure the measurement thetas are bounded properly between 0 and 2pi
+        zPred[2,0] = zPred[2,0] % (2 * math.pi)    
+        z[0,2] = z[0,2] % (2 * math.pi)
 
+        y = (z[0,z_available] - zPred.T).astype(np.float) # Seems to be the difference between the original measurement and the predicted measurement. 
+        y[0,2] = (y[0,2] + math.pi) % (2*math.pi) - math.pi # make sure to take the smallest distance for theta
         S = np.matmul(np.matmul(jH, PPred), jH.T) + self.R[z_available[:, None], (z_available)]  #   The covariance of the prediction xPred, i.e. the model's guess of the state, is transformed into the covariance of the measurement prediction, plus the covariance of error in measurement. 
         K = np.matmul(np.matmul(PPred, jH.T), np.linalg.inv(S)) #This is just the Kalman gain. 
 
-        tmp = np.matmul(K, y.T) # and we multiply by the difference between z observed and the predicted z, per the equation to yield the updated estimate. Not sure why that's not just done in the line below.  
-
+        tmp = np.matmul(K, y.T) # and we multiply by the difference between z observed and the predicted z, per the equation to yield the updated estimate. Not sure why that's not just done in the line below. 
+        
         xEst = xPred + tmp  # completing the formula
         xEst[2] = xEst[2] % (math.pi * 2)
         PEst = np.matmul((np.eye(len(xEst)) - np.matmul(K, jH)), PPred) # formula for the covariance update, but factorised for simplicity.  
+
         return xEst, PEst   
 
     def runFilter(self, visualizeGps=False):
@@ -186,9 +179,9 @@ class ekf:
         estimate_data = ([],[])
         true_data = [[],[]]
         gps_data = [[], []]
-        u = np.array([[10,np.deg2rad(10)/self.dt]])
+        u = np.array([[1000,np.deg2rad(10)/self.dt]])
         for _ in range(1000):
-            x_real, x_update = self.simulateFakeDataMeasurement(x_real[0],x_real[1],x_real[2], u) 
+            x_real, x_update = self.simulateFakeDataMeasurement(x_real[0],x_real[1],x_real[2], u)
             z = x_update.T
 
             x, p = self.ekf_estimation(x, p, z, u)
@@ -212,8 +205,12 @@ class ekf:
         x_pos = x_pos_real + np.random.normal(0, 1.3)# previous x plus a movement plus noise (from measurement)
         y_pos_real = y + u[0,0] * self.dt * math.cos(theta) + np.random.normal(0, 0.3)
         y_pos = y_pos_real + np.random.normal(0, 1.3)# previous y plus a movement plus noise (from measurement)
-        theta_pos_real = (theta + u[0,1] * self.dt) % (math.pi * 2) # increases by 10 degrees 
-        theta_pos = (theta_pos_real + np.random.normal(0,0.5)) % (math.pi * 2)
+        
+        unbounded_theta_pos_real = (theta + u[0,1] * self.dt)
+        unbounded_theta_pos = unbounded_theta_pos_real + np.random.normal(0,0.5)
+
+        theta_pos_real = unbounded_theta_pos_real % (2*math.pi) # increases by 10 degrees 
+        theta_pos = unbounded_theta_pos % (2*math.pi)
 
         ar0d_real = None
         ar0d = None
