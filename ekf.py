@@ -3,12 +3,38 @@ import numpy as np
 import matplotlib.pyplot as plt
 import tf
 import random
-# EKF with AR tag data.  
-arx0 = 0
-ary0 = 0
-arx1 = 10
-ary1 = 0
-arx2 = 10
+
+# 1. comment this out to use the layout from the tag_layouts.py file
+NORTH = math.pi
+EAST = -math.pi / 2
+SOUTH = 0
+WEST = 3 * math.pi / 2
+
+layout_field_test = {
+    0: [(NORTH, 5, 5), (EAST, 5, 5), (SOUTH, 5, 5), (WEST, 5, 5)],
+    1: [(EAST, 0, 10), (SOUTH, 0, 10)],
+    2: [(SOUTH, 9, 10)],
+    3: [(EAST, 4, 2)],
+    4: []
+}
+# end commented block 
+
+# 2. UNCOMMENT the 2 lines below to get the tag_layouts.py file layout
+# from tag_layouts import layout_field_test
+# ar_dict = layout_field_test
+
+
+ar_dict = {}
+for i in layout_field_test.keys():
+    if layout_field_test[i]:
+        ar_dict[i] = (layout_field_test[i][0][1], layout_field_test[i][0][2])
+
+
+arx0 = 5
+ary0 = 5
+arx1 = 0
+ary1 = 10
+arx2 = 9
 ary2 = 10
 P_AR_OBSERVED = 0.7
 ERROR_AR = 0.1
@@ -22,7 +48,9 @@ class ekf:
             0.5  # variance of velocity
         ]) ** 2  # predict state covariance
 
-        self.R = np.diag([1.3, 1.3, 0.5, ERROR_AR, ERROR_AR, ERROR_AR]) ** 2 # Assuming that the SD is in Metres? 
+        self.R = np.diag([1.3, 1.3, 0.5] + [ERROR_AR for _ in ar_dict.values()])
+
+        #self.R = np.diag([1.3, 1.3, 0.5, ERROR_AR, ERROR_AR, ERROR_AR]) ** 2 # Assuming that the SD is in Metres? 
 
         self.dt = 1.0/hz    # window of time to which a set of measurements applies
         self.hz = hz
@@ -70,11 +98,17 @@ class ekf:
     
     def observation_model(self, x, z_available):
         # what comes in from the observation? a 4d vector somehow, of which we need the first three elements.
+        """
         z = np.array([[x[0,0], x[1,0], x[2,0], 
             math.sqrt((x[0,0] - arx0)**2 + (x[1,0] - ary0)**2), 
             math.sqrt((x[0,0] - arx1)**2 + (x[1,0] - ary1)**2),
             math.sqrt((x[0,0] - arx2)**2 + (x[1,0] - ary2)**2)]])
-
+        """
+        z0 =  np.array([[x[0,0], x[1,0], x[2,0]]])
+        zar = np.array([[math.sqrt((x[0,0] - arx)**2 + (x[1,0] - ary)**2) \
+             for _,(arx,ary) in sorted(zip(ar_dict.keys(),ar_dict.values()))]])
+        
+        z = np.concatenate([z0, zar], axis=1)
         return z[:, z_available].T
     
     def jacobF(self, x, u):
@@ -113,7 +147,7 @@ class ekf:
         ((x-d1x)^2 + (y-d1y)^2)^1/2
         ((x-d2x)^2 + (y-d2y)^2)^1/2
         
-        """
+        
         jH = np.array([
             [1, 0, 0, 0],
             [0, 1, 0, 0],
@@ -123,7 +157,18 @@ class ekf:
             [(x[0,0]-arx2)/math.sqrt((x[0,0]-arx2)**2 + (x[1,0]-ary2)**2),(x[1,0]-ary2)/math.sqrt((x[0,0]-arx2)**2 + (x[1,0]-ary2)**2),0,0] #AR tag 2 d
 
         ])
-
+        """
+        jH0 = np.array([
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 1, 0]
+        ])
+        jHAR = np.array([
+            [(x[0,0]-arx)/math.sqrt((x[0,0]-arx)**2 + (x[1,0]-ary)**2), \
+                (x[1,0]-ary)/math.sqrt((x[0,0]-arx)**2 + (x[1,0]-ary)**2),0,0] \
+                for _,(arx,ary) in sorted(zip(ar_dict.keys(),ar_dict.values()))
+        ])
+        jH = np.concatenate([jH0,jHAR])
         return jH[z_available]
 
     def ekf_estimation(self, xEst, PEst, z, u):
